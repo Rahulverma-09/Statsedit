@@ -14,10 +14,11 @@ const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-    origin: '*', // Allow all for debugging, or specifically 'http://localhost:5173'
+    origin: "https://editbank.onrender.com",
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: process.env.UPLOAD_LIMIT || '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: process.env.UPLOAD_LIMIT || '50mb' }));
 app.use(morgan('dev')); // Log every request to terminal
