@@ -15,10 +15,10 @@ function decodeStreamObj(streamObj) {
         const filterEntry = streamObj.dict ? streamObj.dict.get(PDFName.of('Filter')) : null;
         if (filterEntry && String(filterEntry).includes('FlateDecode')) {
             try { return zlib.inflateSync(rawBuf); } catch (_) {
-                try { return zlib.inflateRawSync(rawBuf); } catch (__) {}
+                try { return zlib.inflateRawSync(rawBuf); } catch (__) { }
             }
         }
-    } catch (_) {}
+    } catch (_) { }
     return rawBuf;
 }
 
@@ -67,7 +67,7 @@ function extractPageTextColor(pdfDoc, page) {
         // k — CMYK fill
         for (const m of streamData.matchAll(/(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+k(?=[^a-zA-Z]|$)/g)) {
             const c = +m[1], cy = +m[2], y = +m[3], bk = +m[4];
-            addRgb((1-c)*(1-bk), (1-cy)*(1-bk), (1-y)*(1-bk));
+            addRgb((1 - c) * (1 - bk), (1 - cy) * (1 - bk), (1 - y) * (1 - bk));
         }
 
         // Pick winner: prefer most-frequent RGB color (ignores grayscale table-border noise).
@@ -186,7 +186,7 @@ exports.uploadStatement = async (req, res) => {
             file: {
                 filename: req.file.filename,
                 originalName: req.file.originalname,
-                fileUrl: `http://127.0.0.1:5001/uploads/${req.file.filename}`
+                fileUrl: `https://statsedit-api.onrender.com/uploads/${req.file.filename}`
             },
             transactions: transactions,
             openingBalance,
@@ -350,7 +350,7 @@ exports.regeneratePdf = async (req, res) => {
         res.status(200).json({
             success: true,
             message: 'All values aligned and replaced.',
-            fileUrl: `http://127.0.0.1:5001/downloads/${fileName}`
+            fileUrl: `https://statsedit-api.onrender.com/downloads/${fileName}`
         });
 
     } catch (err) {
@@ -430,7 +430,7 @@ exports.downloadFile = (req, res) => {
 };
 
 exports.editDirect = async (req, res) => {
-const { fileUrl, changes, pageColors } = req.body;
+    const { fileUrl, changes, pageColors } = req.body;
 
     console.log(`[editDirect] Called with fileUrl: ${fileUrl}`);
     console.log(`[editDirect] Number of changes: ${changes?.length}`);
@@ -574,7 +574,7 @@ const { fileUrl, changes, pageColors } = req.body;
         res.status(200).json({
             success: true,
             message: 'Text edits applied successfully.',
-            fileUrl: `http://127.0.0.1:5001/downloads/${fileName}`
+            fileUrl: `https://statsedit-api.onrender.com/downloads/${fileName}`
         });
 
     } catch (err) {

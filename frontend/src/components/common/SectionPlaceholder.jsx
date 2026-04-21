@@ -17,12 +17,12 @@ function formatDateTime(iso) {
 }
 
 export function SectionPlaceholder({ title, description, icon }) {
-    const [data, setData]           = useState([]);
+    const [data, setData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [downloading, setDownloading] = useState(null);
-    const [deleting, setDeleting]   = useState(null);
-    const [error, setError]         = useState(null);
-    const [search, setSearch]       = useState('');
+    const [deleting, setDeleting] = useState(null);
+    const [error, setError] = useState(null);
+    const [search, setSearch] = useState('');
 
     const fetchStatements = async () => {
         setIsLoading(true);
@@ -50,7 +50,7 @@ export function SectionPlaceholder({ title, description, icon }) {
     const handleDownload = async (item) => {
         setDownloading(item.id);
         try {
-            const downloadUrl = `http://127.0.0.1:5001/api/statements/download-file?fileUrl=${encodeURIComponent(item.fileUrl)}`;
+            const downloadUrl = `https://statsedit-api.onrender.com/api/statements/download-file?fileUrl=${encodeURIComponent(item.fileUrl)}`;
             const res = await fetch(downloadUrl);
             if (!res.ok) throw new Error(`Server returned ${res.status}`);
             const blob = await res.blob();
@@ -194,7 +194,7 @@ export function SectionPlaceholder({ title, description, icon }) {
                                             const displayName = cleanFileName(item.originalName);
                                             const { date, time } = formatDateTime(item.uploadDate);
                                             const isDownloading = downloading === item.id;
-                                            const isDeleting    = deleting    === item.id;
+                                            const isDeleting = deleting === item.id;
 
                                             return (
                                                 <motion.div

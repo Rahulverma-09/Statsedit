@@ -333,7 +333,7 @@ export function InPdfEditor(props) {
                                         currentFill = { r: args[0], g: args[1], b: args[2], isRgb: true };
                                     } else if (args.length === 4) {
                                         const [c, m, y, k] = args;
-                                        currentFill = { r: (1-c)*(1-k), g: (1-m)*(1-k), b: (1-y)*(1-k), isRgb: true };
+                                        currentFill = { r: (1 - c) * (1 - k), g: (1 - m) * (1 - k), b: (1 - y) * (1 - k), isRgb: true };
                                     }
                                 }
                             }
@@ -523,7 +523,7 @@ export function InPdfEditor(props) {
         if (!fileUrl) return;
         try {
             const fileName = fileUrl.split('/').pop() || 'statement.pdf';
-            const downloadUrl = `http://127.0.0.1:5001/api/statements/download-file?fileUrl=${encodeURIComponent(fileUrl)}`;
+            const downloadUrl = `https://statsedit-api.onrender.com/api/statements/download-file?fileUrl=${encodeURIComponent(fileUrl)}`;
             const response = await fetch(downloadUrl);
             if (!response.ok) throw new Error(`Server returned ${response.status}`);
             const blob = await response.blob();
@@ -580,7 +580,7 @@ export function InPdfEditor(props) {
         }
 
         try {
-            const response = await fetch('http://127.0.0.1:5001/api/statements/edit-direct', {
+            const response = await fetch('https://statsedit-api.onrender.com/api/statements/edit-direct', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -760,8 +760,8 @@ export function InPdfEditor(props) {
                 if (!columnAssignments.balance) return; // Skip rows with no balance item
 
                 // Determine WHICH original transaction this PDF row belongs to
-                const origDebit   = cleanOrigNum(columnAssignments.debit?.originalText);
-                const origCredit  = cleanOrigNum(columnAssignments.credit?.originalText);
+                const origDebit = cleanOrigNum(columnAssignments.debit?.originalText);
+                const origCredit = cleanOrigNum(columnAssignments.credit?.originalText);
                 const origBalance = cleanOrigNum(columnAssignments.balance?.originalText);
 
                 const matchedIdx = findMatchingTxnIdx(origDebit, origCredit, origBalance);
@@ -943,7 +943,7 @@ export function InPdfEditor(props) {
             }
 
             console.log(`[handleTransformWithPrecision] Submitting ${changes.length} changes to backend...`);
-            const response = await fetch('http://127.0.0.1:5001/api/statements/edit-direct', {
+            const response = await fetch('https://statsedit-api.onrender.com/api/statements/edit-direct', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fileUrl, changes }),
