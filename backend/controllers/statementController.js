@@ -96,7 +96,28 @@ exports.uploadStatement = async (req, res) => {
 
     try {
         const filePath = path.join(__dirname, '../uploads', req.file.filename);
-        const dataBuffer = fs.readFileSync(filePath);
+        let dataBuffer = fs.readFileSync(filePath);
+        const password = req.body.password;
+
+        // If password is provided, try to decrypt the PDF first
+        if (password) {
+            try {
+                const pdfDoc = await PDFDocument.load(dataBuffer, {
+                    password: password,
+                    ignoreEncryption: false
+                });
+                // Save the decrypted PDF back to buffer
+                dataBuffer = await pdfDoc.save();
+                console.log('[uploadStatement] PDF decrypted successfully');
+            } catch (err) {
+                console.error('[uploadStatement] Password decryption failed:', err.message);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Incorrect password or failed to decrypt PDF. Please check the password and try again.'
+                });
+            }
+        }
+
         const parser = new PDFParse({ data: dataBuffer });
 
         const textResult = await parser.getText();
@@ -430,7 +451,7 @@ exports.downloadFile = (req, res) => {
 };
 
 exports.editDirect = async (req, res) => {
-    const { fileUrl, changes, pageColors } = req.body;
+    const { fileUrl, changes, pageColors, password } = req.body;
 
     console.log(`[editDirect] Called with fileUrl: ${fileUrl}`);
     console.log(`[editDirect] Number of changes: ${changes?.length}`);
@@ -460,7 +481,27 @@ exports.editDirect = async (req, res) => {
             return res.status(404).json({ success: false, message: `File not found: ${originalPath}` });
         }
 
-        const pdfDoc = await PDFDocument.load(fs.readFileSync(originalPath));
+        let originalPdfBytes = fs.readFileSync(originalPath);
+        
+        // If password is provided, decrypt the PDF first
+        if (password) {
+            try {
+                const pdfDoc = await PDFDocument.load(originalPdfBytes, {
+                    password: password,
+                    ignoreEncryption: false
+                });
+                originalPdfBytes = await pdfDoc.save();
+                console.log('[editDirect] PDF decrypted successfully');
+            } catch (err) {
+                console.error('[editDirect] Password decryption failed:', err.message);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Incorrect password or failed to decrypt PDF.'
+                });
+            }
+        }
+
+        const pdfDoc = await PDFDocument.load(originalPdfBytes);
         const pages = pdfDoc.getPages();
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);

@@ -34,9 +34,12 @@ export const authService = {
 };
 
 export const statementService = {
-    upload: async (file) => {
+    upload: async (file, password) => {
         const formData = new FormData();
         formData.append('file', file);
+        if (password) {
+            formData.append('password', password);
+        }
         const response = await api.post('/statements/upload', formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',
