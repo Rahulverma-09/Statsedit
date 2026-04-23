@@ -55,8 +55,14 @@ export function FileUploader({ onUpload }) {
                 }
             } catch (error) {
                 console.error('Upload error:', error);
-                alert('Connection to backend failed. Using mock URL for now.');
-                onUpload(file, URL.createObjectURL(file));
+                
+                // Extract proper error message from backend if available
+                const errorMessage = error.response?.data?.message || error.message || 'Connection to backend failed.';
+                alert('Upload Error: ' + errorMessage);
+                
+                // Notice we removed the fallback `onUpload` call here because if the 
+                // backend fails (e.g., due to unsupported encryption or bad password), 
+                // the frontend shouldn't try to mock it – this caused the PasswordException crash.
             } finally {
                 setIsLoading(false);
             }
