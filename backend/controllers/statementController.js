@@ -108,7 +108,10 @@ exports.uploadStatement = async (req, res) => {
                 });
                 // Save the decrypted PDF back to buffer
                 dataBuffer = await pdfDoc.save();
-                console.log('[uploadStatement] PDF decrypted successfully');
+                
+                // Overwrite the original file with the decrypted version
+                fs.writeFileSync(filePath, dataBuffer);
+                console.log('[uploadStatement] PDF decrypted and saved successfully');
             } catch (err) {
                 console.error('[uploadStatement] Password decryption failed:', err.message);
                 return res.status(400).json({
