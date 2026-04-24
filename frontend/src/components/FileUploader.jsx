@@ -55,13 +55,20 @@ export function FileUploader({ onUpload }) {
             try {
                 // First attempt: try without password if not already marked as required
                 const pwdToSend = isPasswordRequired ? password : undefined;
+                
+                console.log('[FileUploader] Uploading with password:', pwdToSend ? 'YES' : 'NO');
+                console.log('[FileUploader] Password value:', pwdToSend);
+                console.log('[FileUploader] isPasswordRequired:', isPasswordRequired);
+                
                 const response = await statementService.upload(file, pwdToSend);
                 
                 if (response.success) {
                     // Success! Reset states and proceed
+                    console.log('[FileUploader] Upload successful!');
                     setIsPasswordRequired(false);
                     onUpload(file, response.file.fileUrl, response.transactions, response.openingBalance, response.closingBalance);
                 } else {
+                    console.error('[FileUploader] Upload failed:', response.message);
                     // Check if backend says password is required
                     if (response.message && (response.message.includes('password') || response.message.includes('Password') || response.message.includes('encrypt'))) {
                         setIsPasswordRequired(true);
@@ -71,7 +78,8 @@ export function FileUploader({ onUpload }) {
                     }
                 }
             } catch (error) {
-                console.error('Upload error:', error);
+                console.error('[FileUploader] Upload error:', error);
+                console.error('[FileUploader] Error response:', error.response?.data);
                 
                 // Check if error indicates password protection
                 const errorMessage = error.response?.data?.message || error.message || '';

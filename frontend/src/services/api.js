@@ -39,7 +39,13 @@ export const statementService = {
         formData.append('file', file);
         if (password) {
             formData.append('password', password);
+            console.log('[API Service] Adding password to FormData');
+        } else {
+            console.log('[API Service] No password to add');
         }
+        
+        console.log('[API Service] Sending request to /statements/upload');
+        
         const response = await api.post('/statements/upload', formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',
