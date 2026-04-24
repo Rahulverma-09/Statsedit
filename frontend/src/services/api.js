@@ -39,13 +39,6 @@ export const statementService = {
         formData.append('file', file);
         if (password) {
             formData.append('password', password);
-            console.log('[API] Sending password:', password);
-        } else {
-            console.log('[API] No password provided');
-        }
-        console.log('[API] FormData entries:');
-        for (let pair of formData.entries()) {
-            console.log(pair[0] + ': ' + pair[1]);
         }
         const response = await api.post('/statements/upload', formData, {
             headers: {

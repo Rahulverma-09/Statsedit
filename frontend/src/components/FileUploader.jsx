@@ -10,6 +10,8 @@ export function FileUploader({ onUpload }) {
     const [file, setFile] = useState(null);
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    const [isPasswordRequired, setIsPasswordRequired] = useState(false);
+    const [uploadAttempted, setUploadAttempted] = useState(false);
 
     const handleDrag = (e) => {
         e.preventDefault();
@@ -37,32 +39,48 @@ export function FileUploader({ onUpload }) {
         }
     };
 
-    const removeFile = () => setFile(null);
+    const removeFile = () => {
+        setFile(null);
+        setPassword('');
+        setIsPasswordRequired(false);
+        setUploadAttempted(false);
+    };
 
     const [isLoading, setIsLoading] = useState(false);
 
     const handleProcess = async () => {
         if (file) {
             setIsLoading(true);
+            setUploadAttempted(true);
             try {
-                const response = await statementService.upload(file, password || undefined);
+                // First attempt: try without password if not already marked as required
+                const pwdToSend = isPasswordRequired ? password : undefined;
+                const response = await statementService.upload(file, pwdToSend);
+                
                 if (response.success) {
-                    // Extracting the correct URL and transactions from nested response
+                    // Success! Reset states and proceed
+                    setIsPasswordRequired(false);
                     onUpload(file, response.file.fileUrl, response.transactions, response.openingBalance, response.closingBalance);
-                }
-                else {
-                    alert('Upload failed: ' + response.message);
+                } else {
+                    // Check if backend says password is required
+                    if (response.message && (response.message.includes('password') || response.message.includes('Password') || response.message.includes('encrypt'))) {
+                        setIsPasswordRequired(true);
+                        alert('This PDF is password-protected. Please enter the password to continue.');
+                    } else {
+                        alert('Upload failed: ' + response.message);
+                    }
                 }
             } catch (error) {
                 console.error('Upload error:', error);
                 
-                // Extract proper error message from backend if available
-                const errorMessage = error.response?.data?.message || error.message || 'Connection to backend failed.';
-                alert('Upload Error: ' + errorMessage);
-                
-                // Notice we removed the fallback `onUpload` call here because if the 
-                // backend fails (e.g., due to unsupported encryption or bad password), 
-                // the frontend shouldn't try to mock it – this caused the PasswordException crash.
+                // Check if error indicates password protection
+                const errorMessage = error.response?.data?.message || error.message || '';
+                if (errorMessage.includes('password') || errorMessage.includes('Password') || errorMessage.includes('encrypt')) {
+                    setIsPasswordRequired(true);
+                    alert('This PDF is password-protected. Please enter the password to continue.');
+                } else {
+                    alert('Upload Error: ' + (error.response?.data?.message || error.message || 'Connection to backend failed.'));
+                }
             } finally {
                 setIsLoading(false);
             }
@@ -151,44 +169,51 @@ export function FileUploader({ onUpload }) {
                                     </p>
                                 </div>
 
-                                {/* Password Input for Protected PDFs */}
-                                <div className="mt-4 pt-4 border-t border-slate-100">
-                                    <div className="flex items-start gap-3 text-slate-600 bg-amber-50/50 p-4 rounded-xl border border-amber-200">
-                                        <Lock className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" />
-                                        <div className="flex-1">
-                                            <p className="text-sm font-medium text-amber-800 mb-2">Password Protected PDF?</p>
-                                            <p className="text-xs text-amber-700 mb-3">
-                                                If your bank statement is password-protected, enter the password below.
-                                            </p>
-                                            <div className="relative">
-                                                <input
-                                                    type={showPassword ? "text" : "password"}
-                                                    value={password}
-                                                    onChange={(e) => setPassword(e.target.value)}
-                                                    placeholder="Enter PDF password (optional)"
-                                                    className="w-full px-3 py-2 pr-10 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
-                                                />
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowPassword(!showPassword)}
-                                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-amber-600 hover:text-amber-700 p-1"
-                                                    title={showPassword ? "Hide password" : "Show password"}
-                                                >
-                                                    {showPassword ? (
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                                                        </svg>
-                                                    ) : (
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                        </svg>
-                                                    )}
-                                                </button>
+                                {/* Password Input - Only show if PDF is password-protected */}
+                                {isPasswordRequired && (
+                                    <motion.div
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        className="mt-4 pt-4 border-t border-slate-100"
+                                    >
+                                        <div className="flex items-start gap-3 text-slate-600 bg-amber-50/50 p-4 rounded-xl border border-amber-200">
+                                            <Lock className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" />
+                                            <div className="flex-1">
+                                                <p className="text-sm font-medium text-amber-800 mb-2">Password Required</p>
+                                                <p className="text-xs text-amber-700 mb-3">
+                                                    This PDF is password-protected. Please enter the password to unlock and process it.
+                                                </p>
+                                                <div className="relative">
+                                                    <input
+                                                        type={showPassword ? "text" : "password"}
+                                                        value={password}
+                                                        onChange={(e) => setPassword(e.target.value)}
+                                                        placeholder="Enter PDF password"
+                                                        className="w-full px-3 py-2 pr-10 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
+                                                        autoFocus
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowPassword(!showPassword)}
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-amber-600 hover:text-amber-700 p-1"
+                                                        title={showPassword ? "Hide password" : "Show password"}
+                                                    >
+                                                        {showPassword ? (
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                                                            </svg>
+                                                        ) : (
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                            </svg>
+                                                        )}
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                </div>
+                                    </motion.div>
+                                )}
                             </CardContent>
                         </Card>
                     </motion.div>
