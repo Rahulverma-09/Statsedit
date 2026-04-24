@@ -102,10 +102,28 @@ exports.uploadStatement = async (req, res) => {
         // If password is provided, try to decrypt the PDF first
         if (password) {
             try {
-                const pdfDoc = await PDFDocument.load(dataBuffer, {
-                    password: password,
-                    ignoreEncryption: false
-                });
+                console.log('[uploadStatement] Attempting to decrypt PDF with password...');
+                
+                // Try multiple approaches to decrypt
+                let pdfDoc = null;
+                
+                // Approach 1: Try with ignoreEncryption: false (strict mode)
+                try {
+                    pdfDoc = await PDFDocument.load(dataBuffer, {
+                        password: password,
+                        ignoreEncryption: false
+                    });
+                    console.log('[uploadStatement] PDF decrypted successfully (strict mode)');
+                } catch (strictErr) {
+                    console.log('[uploadStatement] Strict mode failed, trying ignoreEncryption: true');
+                    // Approach 2: Try with ignoreEncryption: true (lenient mode)
+                    pdfDoc = await PDFDocument.load(dataBuffer, {
+                        password: password,
+                        ignoreEncryption: true
+                    });
+                    console.log('[uploadStatement] PDF decrypted successfully (lenient mode)');
+                }
+                
                 // Save the decrypted PDF back to buffer
                 dataBuffer = await pdfDoc.save();
                 
@@ -114,9 +132,10 @@ exports.uploadStatement = async (req, res) => {
                 console.log('[uploadStatement] PDF decrypted and saved successfully');
             } catch (err) {
                 console.error('[uploadStatement] Password decryption failed:', err.message);
+                console.error('[uploadStatement] Error details:', err);
                 return res.status(400).json({
                     success: false,
-                    message: 'Incorrect password or failed to decrypt PDF. Please check the password and try again.'
+                    message: 'Incorrect password or failed to decrypt PDF. Please check the password and try again. Error: ' + err.message
                 });
             }
         }
