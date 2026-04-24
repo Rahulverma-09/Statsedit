@@ -145,9 +145,13 @@ exports.uploadStatement = async (req, res) => {
         let tableResult = null;
 
         try {
-            parser = new PDFParse({ data: dataBuffer });
+            // If we decrypted the PDF, use the decrypted buffer directly
+            // Otherwise use the original buffer
+            console.log('[uploadStatement] Creating PDFParse with buffer size:', dataBuffer.length);
+            parser = new PDFParse({ data: dataBuffer, ignoreEncryption: password ? true : false });
             const textResult = await parser.getText();
             text = textResult.text || '';
+            console.log('[uploadStatement] PDFParse getText successful, text length:', text.length);
         } catch (parseErr) {
             console.error('[uploadStatement] PDFParse getText failed:', parseErr.message);
             // If it's a password error, give a helpful message
