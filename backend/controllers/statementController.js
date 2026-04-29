@@ -362,9 +362,18 @@ exports.uploadStatement = async (req, res) => {
         }
 
         // --- SEARCHING BALANCES ---
-        // Heuristic: Match 'Opening/Closing Balance' followed by anything until we find a number
-        const obMatch = text.match(/Opening Balance[^\d]*?([\d,]+\.\d{2})/i);
-        const cbMatch = text.match(/Closing Balance[^\d]*?([\d,]+\.\d{2})/i);
+        // AU Bank format: "Opening Balance(₹) : 638.27" or "Opening Balance(₹) : 25,812.11"
+        // Try specific AU Bank pattern first
+        let obMatch = text.match(/Opening Balance\([₹]\)\s*[:\-]?\s*([\d,]+\.\d{2})/i);
+        let cbMatch = text.match(/Closing Balance\([₹]\)\s*[:\-]?\s*([\d,]+\.\d{2})/i);
+        
+        // Fallback to generic pattern if AU Bank specific fails
+        if (!obMatch) {
+            obMatch = text.match(/Opening Balance[^\d]*?([\d,]+\.\d{2})/i);
+        }
+        if (!cbMatch) {
+            cbMatch = text.match(/Closing Balance[^\d]*?([\d,]+\.\d{2})/i);
+        }
 
         let openingBalance = obMatch ? parseFloat(obMatch[1].replace(/,/g, '')) : null;
         let closingBalance = cbMatch ? parseFloat(cbMatch[1].replace(/,/g, '')) : null;
