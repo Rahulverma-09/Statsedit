@@ -737,13 +737,11 @@ exports.uploadStatement = async (req, res) => {
             }
         }
         
-        // If no transactions found or very few, try AU Bank specific parsing
-        if (transactions.length === 0 || transactions.length < 3) {
+        // If NO transactions found, try AU Bank specific parsing
+        // BUG FIX: Don't clear transactions if we already have good data from universal parser
+        if (transactions.length === 0) {
             if (!isSBI && isAU) {
-                console.log('[uploadStatement] Trying AU Bank specific parsing...');
-                
-                // Clear previous transactions
-                transactions.length = 0;
+                console.log('[uploadStatement] Trying AU Bank specific parsing (no transactions found yet)...');
                 
                 // AU Bank format: "01 Aug 2025" date pattern
                 const auDatePattern = /(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/;
