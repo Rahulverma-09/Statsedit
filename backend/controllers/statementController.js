@@ -613,22 +613,47 @@ exports.uploadStatement = async (req, res) => {
                     continue;
                 }
 
-                // Collect multi-line row: grab continuation lines until next date or separator
+                // ── Multi-line merger ────────────────────────────────────────────────
+                // AU Bank (and most banks) print TWO dates per transaction:
+                //   Line 1: Transaction Date  ("01 Aug 2025")
+                //   Line 2: Value Date        ("01 Aug 2025")  ← also a date pattern!
+                //   Lines 3-N: Narration text
+                //   Line N+1: Ref/Cheque No
+                //   Line N+2: Debit / Credit / Balance
+                // Old code stopped at Line 2 → captured zero narration or amounts.
+                // Fix: allow ONE consecutive date (value date), stop on SECOND date.
                 let combinedLine = line;
+                let valueDate = dateMatch[0];  // default: same as txn date
+                let valueDateSeen = false;
                 let lookAhead = i + 1;
-                while (lookAhead < Math.min(i + 5, lines.length)) {
+
+                while (lookAhead < Math.min(i + 15, lines.length)) {
                     const nextLine = lines[lookAhead].trim();
-                    if (!nextLine || nextLine.length < 3) break;
-                    // Stop if next line starts with a date
-                    let nextHasDate = false;
+                    if (!nextLine || nextLine.length < 2) { lookAhead++; break; }
+                    if (/page\s*\d+|continued on next|^\s*page\s*$/i.test(nextLine)) break;
+
+                    let nextIsDate = false;
+                    let nextDateVal = null;
                     for (const pattern of datePatterns) {
-                        if (pattern.test(nextLine)) { nextHasDate = true; break; }
+                        const m = nextLine.match(pattern);
+                        if (m) { nextIsDate = true; nextDateVal = m[0]; break; }
                     }
-                    if (nextHasDate) break;
-                    // Stop if it looks like a page footer
-                    if (/page\s*\d|continued|\bpage\b/i.test(nextLine)) break;
-                    combinedLine += ' ' + nextLine;
-                    lookAhead++;
+
+                    if (nextIsDate) {
+                        if (!valueDateSeen) {
+                            // First date = value date → include it, keep going
+                            valueDate = nextDateVal;
+                            valueDateSeen = true;
+                            combinedLine += ' ' + nextLine;
+                            lookAhead++;
+                        } else {
+                            // Second date = next transaction → stop
+                            break;
+                        }
+                    } else {
+                        combinedLine += ' ' + nextLine;
+                        lookAhead++;
+                    }
                 }
 
                 // Extract all numeric amounts from the combined line
@@ -724,29 +749,50 @@ exports.uploadStatement = async (req, res) => {
                     console.log(`[GENERIC]   -> Debit: ${debit}, Credit: ${credit}, Balance: ${balance}`);
                 }
 
-                // Extract description: text between end-of-date and first numeric amount
-                const dateEnd = combinedLine.indexOf(dateMatch[0]) + dateMatch[0].length;
+                // ── Description extraction ───────────────────────────────────────────
+                // Combined text: "01 Aug 2025 [01 Aug 2025] NEFT CR-... [REF] 8,300.00 8,938.27"
+                // We want text between the last header date and the first amount.
+                let descStart = combinedLine.indexOf(dateMatch[0]) + dateMatch[0].length;
+
+                // Skip the value date if it appears right after the transaction date
+                if (valueDate && valueDate !== dateMatch[0]) {
+                    const vdIdx = combinedLine.indexOf(valueDate, descStart);
+                    if (vdIdx !== -1 && vdIdx <= descStart + 5) {
+                        descStart = vdIdx + valueDate.length;
+                    }
+                }
+
                 const firstAmountIdx = combinedLine.search(amountPattern);
                 let description = '';
-                if (firstAmountIdx > dateEnd) {
-                    description = combinedLine.substring(dateEnd, firstAmountIdx).trim();
+                if (firstAmountIdx > descStart) {
+                    description = combinedLine.substring(descStart, firstAmountIdx).trim();
                 }
-                description = description.replace(/\s+/g, ' ').replace(/^([.\-\s])+/, '').substring(0, 100);
 
-                if (description.length > 2 || amounts.length >= 2) {
-                    transactions.push({
-                        id: Math.random().toString(36).substr(2, 9),
-                        date: dateMatch[0],
-                        valueDate: dateMatch[0],
-                        description: description || 'Transaction',
-                        reference: '',
-                        debit: debit,
-                        credit: credit,
-                        balance: balance
-                    });
-                    // Skip lines already consumed by multi-line merge
-                    i = lookAhead - 1;
+                description = description
+                    .replace(/\s+/g, ' ')
+                    .replace(/^[\s\.\-\/]+/, '')
+                    .replace(/^\d[\d\s]*$/, '')   // strip standalone number sequences (ref artifacts)
+                    .substring(0, 150)
+                    .trim();
+
+                if (transactions.length < 5) {
+                    console.log(`[GENERIC] Line ${i}: "${combinedLine.substring(0, 120)}"`);
+                    console.log(`[GENERIC]   Txn=${dateMatch[0]}, Val=${valueDate}, Amounts=${amounts.join(', ')}`);
+                    console.log(`[GENERIC]   Dr=${debit}, Cr=${credit}, Bal=${balance}, Desc="${description.substring(0,60)}"`);
                 }
+
+                transactions.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    date: dateMatch[0],
+                    valueDate: valueDate,
+                    description: description || 'Transaction',
+                    reference: '',
+                    debit: debit,
+                    credit: credit,
+                    balance: balance
+                });
+                // Skip all lines already consumed by the multi-line merge
+                i = lookAhead - 1;
             }
 
             console.log(`[uploadStatement] Generic parser extracted ${transactions.length} transactions`);
