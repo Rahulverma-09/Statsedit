@@ -368,6 +368,11 @@ exports.uploadStatement = async (req, res) => {
 
         let openingBalance = obMatch ? parseFloat(obMatch[1].replace(/,/g, '')) : null;
         let closingBalance = cbMatch ? parseFloat(cbMatch[1].replace(/,/g, '')) : null;
+        
+        // DEBUG: Log balance extraction
+        console.log(`[BALANCE_DEBUG] obMatch: ${obMatch ? obMatch[0] : 'null'} -> ${obMatch ? obMatch[1] : 'null'}`);
+        console.log(`[BALANCE_DEBUG] cbMatch: ${cbMatch ? cbMatch[0] : 'null'} -> ${cbMatch ? cbMatch[1] : 'null'}`);
+        console.log(`[BALANCE_DEBUG] Extracted: Opening=${openingBalance}, Closing=${closingBalance}`);
 
         // --- EXTRACTING TRANSACTIONS FROM TEXT ---
         // pdf-parse v2.x doesn't have getTable() - parse from text instead
