@@ -31,10 +31,9 @@ export function InPdfEditor(props) {
     // Sync internalTransactions when initialTransactions prop changes
     useEffect(() => {
         // When a new file is uploaded, the parent provides new initialTransactions.
-        // We ALWAYS accept them as the baseline. The visual parser will overwrite 
-        // them later if it succeeds in extracting better structured data.
+        // Backend data is ALWAYS authoritative — never override with visual parser.
         console.log('[InPdfEditor] initialTransactions prop received:', initialTransactions?.length || 0);
-        if (initialTransactions) {
+        if (initialTransactions && initialTransactions.length > 0) {
             setInternalTransactions(initialTransactions);
         }
     }, [initialTransactions]);
@@ -190,12 +189,15 @@ export function InPdfEditor(props) {
         };
     };
 
-    const runAutoCalculation = (dataToProcess = null, activeStructure = tableStructure) => {
+    const runAutoCalculation = (dataToProcess = null, activeStructure = tableStructure, backendTxns = null) => {
         if (!activeStructure) return;
         
-        // CRITICAL FIX: If backend already provided good data (5+ transactions), don't override with visual parser
-        if (initialTransactions && initialTransactions.length >= 5) {
-            console.log('[runAutoCalculation] Backend provided sufficient data, skipping visual parser override');
+        // CRITICAL FIX: If backend already provided ANY transactions, do NOT override with visual parser.
+        // The visual parser works on PDF coordinate layer which may have different data than the actual
+        // text content. Backend extraction via pdf-parse is always more reliable.
+        const effectiveBackendTxns = backendTxns !== null ? backendTxns : initialTransactions;
+        if (effectiveBackendTxns && effectiveBackendTxns.length > 0) {
+            console.log('[runAutoCalculation] Backend provided data (' + effectiveBackendTxns.length + ' txns), skipping visual parser override');
             return;
         }
 
@@ -411,16 +413,15 @@ export function InPdfEditor(props) {
                         const dateMatch = rowTextJoined.match(/\d{1,2}[\/\-\s](?:[A-Za-z]{3}|\d{1,2})(?:[\/\-\s]\d{2,4})?/);
                         const dateStr = dateMatch ? dateMatch[0] : '';
                         
-                        const existingTxn = internalTransactions[newInternalTxns.length];
+                        // Use only visual-parser-derived data when no backend data available
                         const rawDescription = rowTextJoined.substring(rowTextJoined.indexOf(dateStr) + dateStr.length).replace(/[0-9,.\-\s()₹]+$/, '').trim();
-                        const description = existingTxn?.description && existingTxn.description.length > 3 ? existingTxn.description : (rawDescription.substring(0, 80) || 'Transaction');
 
                         newInternalTxns.push({
-                            id: existingTxn?.id || `auto-${Math.random().toString(36).substr(2, 9)}`,
-                            date: existingTxn?.date || dateStr,
-                            valueDate: existingTxn?.valueDate || dateStr,
-                            description: description,
-                            reference: existingTxn?.reference || '',
+                            id: `auto-${Math.random().toString(36).substr(2, 9)}`,
+                            date: dateStr,
+                            valueDate: dateStr,
+                            description: rawDescription.substring(0, 80) || 'Transaction',
+                            reference: '',
                             debit: debit,
                             credit: credit,
                             balance: lastKnownBalance.toFixed(2)
@@ -431,14 +432,14 @@ export function InPdfEditor(props) {
                 }
             });
 
-            // Only use visual parser transactions if backend didn't provide any
-            // Backend extraction is more accurate for protected PDFs
-            console.log('[VISUAL_PARSER] Comparison - Backend:', initialTransactions?.length || 0, 'rows, Visual parser:', newInternalTxns.length, 'rows');
-            if (newInternalTxns.length > 0 && (!initialTransactions || initialTransactions.length === 0)) {
-                console.log('[VISUAL_PARSER] Using visual parser data (no backend data)');
+            // Only use visual parser transactions if backend didn't provide any.
+            // Backend extraction is always more accurate for protected PDFs.
+            console.log('[VISUAL_PARSER] Comparison - Backend:', effectiveBackendTxns?.length || 0, 'rows, Visual parser:', newInternalTxns.length, 'rows');
+            if (newInternalTxns.length > 0 && (!effectiveBackendTxns || effectiveBackendTxns.length === 0)) {
+                console.log('[VISUAL_PARSER] Using visual parser data (no backend data available)');
                 setInternalTransactions(newInternalTxns);
-            } else if (initialTransactions && initialTransactions.length > 0) {
-                console.log('[VISUAL_PARSER] Keeping backend data, visual parser ignored');
+            } else {
+                console.log('[VISUAL_PARSER] Keeping backend data, visual parser result discarded');
             }
 
             return nextPages.map(page => ({
@@ -606,13 +607,18 @@ export function InPdfEditor(props) {
                 setPagesData(allPagesData);
                 const structure = analyzeTableStructure(allPagesData);
                 
-                // Immediately reconstruct transactions using the visual table structure
-                if (structure) {
-                    // Because React state updates are asynchronous, we pass the structure explicitly
-                    // to avoid the stale closure problem.
+                // Only run visual parser if backend provided NO transactions.
+                // We capture initialTransactions in this closure at load time to avoid stale state.
+                const backendTxnsAtLoadTime = initialTransactions && initialTransactions.length > 0 ? initialTransactions : null;
+                if (structure && (!backendTxnsAtLoadTime || backendTxnsAtLoadTime.length === 0)) {
+                    console.log('[PDF_LOAD] No backend data — running visual parser as fallback');
+                    // Because React state updates are asynchronous, we pass the structure and
+                    // backend txns explicitly to avoid the stale closure problem.
                     setTimeout(() => {
-                        runAutoCalculation(allPagesData, structure);
+                        runAutoCalculation(allPagesData, structure, backendTxnsAtLoadTime);
                     }, 0);
+                } else if (backendTxnsAtLoadTime && backendTxnsAtLoadTime.length > 0) {
+                    console.log('[PDF_LOAD] Backend provided', backendTxnsAtLoadTime.length, 'transactions — visual parser skipped');
                 }
             } catch (error) {
                 console.error("Error loading PDF:", error);

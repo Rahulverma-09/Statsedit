@@ -590,148 +590,172 @@ exports.uploadStatement = async (req, res) => {
         // Generic parser for non-SBI banks or as fallback
         if (!isSBI || transactions.length === 0) {
             console.log('[uploadStatement] Running generic parser...');
-            
-            for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            
-            // Try all date patterns
-            let dateMatch = null;
-            for (const pattern of datePatterns) {
-                dateMatch = line.match(pattern);
-                if (dateMatch) break;
-            }
 
-            if (dateMatch) {
-                // Extract all amounts from this line - but filter out reference numbers
-                const allAmountMatches = [...line.matchAll(amountPattern)];
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+
+                // Try all date patterns
+                let dateMatch = null;
+                for (const pattern of datePatterns) {
+                    dateMatch = line.match(pattern);
+                    if (dateMatch) break;
+                }
+
+                if (!dateMatch) continue;
+
+                // Skip header/footer lines
+                const lineLower = line.toLowerCase();
+                if (lineLower.includes('opening balance') || lineLower.includes('closing balance') ||
+                    lineLower.includes('txn date') || lineLower.includes('value date') ||
+                    lineLower.includes('description') || lineLower.includes('transaction date') ||
+                    lineLower.includes('statement period') || lineLower.includes('account number') ||
+                    (lineLower.includes('debit') && lineLower.includes('credit') && lineLower.includes('balance'))) {
+                    continue;
+                }
+
+                // Collect multi-line row: grab continuation lines until next date or separator
+                let combinedLine = line;
+                let lookAhead = i + 1;
+                while (lookAhead < Math.min(i + 5, lines.length)) {
+                    const nextLine = lines[lookAhead].trim();
+                    if (!nextLine || nextLine.length < 3) break;
+                    // Stop if next line starts with a date
+                    let nextHasDate = false;
+                    for (const pattern of datePatterns) {
+                        if (pattern.test(nextLine)) { nextHasDate = true; break; }
+                    }
+                    if (nextHasDate) break;
+                    // Stop if it looks like a page footer
+                    if (/page\s*\d|continued|\bpage\b/i.test(nextLine)) break;
+                    combinedLine += ' ' + nextLine;
+                    lookAhead++;
+                }
+
+                // Extract all numeric amounts from the combined line
+                const allAmountMatches = [...combinedLine.matchAll(amountPattern)];
                 const amounts = [];
-                
                 for (const match of allAmountMatches) {
                     const num = parseFloat(match[0].replace(/,/g, ''));
-                    // Filter: amounts should be between 0 and 100 crore (reasonable transaction range)
-                    if (num > 0 && num < 1000000000) {
-                        amounts.push(num);
-                    }
+                    if (num > 0 && num < 1000000000) amounts.push(num);
                 }
 
-                // DEBUG: Log each date line and extracted amounts
-                if (amounts.length >= 2 && transactions.length < 5) {
-                    console.log(`[DEBUG] Line ${i}: "${line.substring(0, 80)}..."`);
-                    console.log(`[DEBUG]   Date match: ${dateMatch[0]}`);
-                    console.log(`[DEBUG]   Raw amounts found: ${allAmountMatches.map(m => m[0]).join(', ')}`);
-                    console.log(`[DEBUG]   Filtered amounts: ${amounts.join(', ')}`);
+                if (amounts.length < 2) continue;
+
+                // DEBUG
+                if (transactions.length < 5) {
+                    console.log(`[GENERIC] Line ${i}: "${combinedLine.substring(0, 100)}"`);
+                    console.log(`[GENERIC]   Amounts: ${amounts.join(', ')}`);
                 }
 
-                if (amounts.length >= 2) {
-                    // Last amount is typically balance
-                    const balance = amounts[amounts.length - 1];
-                    
-                    // For bank statements, typically we have: [debit] [credit] [balance] or [amount] [balance]
-                    let debit = 0, credit = 0;
-                    
-                    const lineLower = line.toLowerCase();
-                    // Check for CR/DR indicators in description (NEFT CR-, NEFT DR-, etc.) using word boundaries
-                    const hasCR = /\b(cr|credit|cr\-)\b/.test(lineLower);
-                    const hasDR = /\b(dr|debit|dr\-)\b/.test(lineLower);
-                    
-                    // DEBUG: Log CR/DR detection
-                    if (transactions.length < 5) {
-                        console.log(`[DEBUG]   hasCR: ${hasCR}, hasDR: ${hasDR}, amounts.length: ${amounts.length}`);
-                    }
-                    
-                    if (amounts.length >= 3) {
-                        // Format: debit, credit, balance
-                        // Check CR/DR indicators to determine which is which
-                        if (hasCR && !hasDR) {
-                            // Credit transaction - amount before balance is the credit
-                            credit = amounts[amounts.length - 3];
-                            debit = amounts[amounts.length - 2];
-                        } else if (hasDR && !hasCR) {
-                            // Debit transaction
-                            debit = amounts[amounts.length - 3];
-                            credit = amounts[amounts.length - 2];
-                        } else {
-                            // Default: assume debit, credit, balance order
-                            debit = amounts[amounts.length - 3];
-                            credit = amounts[amounts.length - 2];
+                const balance = amounts[amounts.length - 1];
+                let debit = 0, credit = 0;
+
+                // Detect CR/DR keywords anywhere in the combined (multi-line) text
+                const combinedLower = combinedLine.toLowerCase();
+                const hasCR = /\b(neft cr|imps cr|upi cr|rtgs cr|by transfer|credit|\bcr\b)/.test(combinedLower);
+                const hasDR = /\b(neft dr|imps dr|upi dr|rtgs dr|to transfer|debit|withdrawal|wdl|atm|\bdr\b)/.test(combinedLower);
+
+                // Get prev balance for delta-based classification
+                let prevBalance = null;
+                if (transactions.length > 0) {
+                    prevBalance = parseFloat(String(transactions[transactions.length - 1].balance).replace(/,/g, ''));
+                } else if (openingBalance !== null) {
+                    prevBalance = openingBalance;
+                }
+                const balanceDelta = (prevBalance !== null) ? balance - prevBalance : null;
+
+                if (amounts.length >= 3) {
+                    // Three columns: [debit_col, credit_col, balance] — one col will be 0/dash
+                    const a1 = amounts[amounts.length - 3]; // debit column
+                    const a2 = amounts[amounts.length - 2]; // credit column
+
+                    // Use CR/DR keyword first, then balance delta, then column order
+                    if (hasCR && !hasDR) {
+                        credit = a1;
+                        debit = a2;
+                        // Validate with balance delta — swap back if math doesn't work
+                        if (balanceDelta !== null && Math.abs((balanceDelta - credit)) > 1 && Math.abs((balanceDelta + debit)) < 1) {
+                            // swap
+                            [debit, credit] = [credit, debit];
                         }
-                    } else if (amounts.length === 2) {
-                        // Format: amount, balance - need to determine if debit or credit
-                        const amount = amounts[0];
-                        if (hasCR) {
-                            credit = amount;
-                        } else if (hasDR) {
-                            debit = amount;
-                        } else {
-                            // Default: check if balance increased or decreased from previous transaction
-                            let prevBalance = null;
-                            if (transactions.length > 0) {
-                                prevBalance = parseFloat(String(transactions[transactions.length - 1].balance).replace(/,/g, ''));
-                            } else if (openingBalance !== null) {
-                                prevBalance = openingBalance;
-                            }
-                            
-                            if (prevBalance !== null) {
-                                // If current balance > prev balance, it's a credit
-                                if (balance > prevBalance) {
-                                    credit = amount;
-                                } else {
-                                    debit = amount;
-                                }
+                    } else if (hasDR && !hasCR) {
+                        debit = a1;
+                        credit = a2;
+                        if (balanceDelta !== null && Math.abs((-balanceDelta - debit)) > 1 && Math.abs((-balanceDelta + credit)) < 1) {
+                            [debit, credit] = [credit, debit];
+                        }
+                    } else {
+                        // No keyword — use balance delta to determine which is non-zero
+                        if (balanceDelta !== null) {
+                            if (balanceDelta > 0) {
+                                // Credit transaction — a2 should be the credit amount near balanceDelta
+                                if (Math.abs(a2 - balanceDelta) < 1) { credit = a2; debit = a1; }
+                                else if (Math.abs(a1 - balanceDelta) < 1) { credit = a1; debit = a2; }
+                                else { debit = a1; credit = a2; } // fallback column order
                             } else {
-                                // Ultimate fallback
-                                credit = amount;
+                                // Debit transaction
+                                const absDelta = Math.abs(balanceDelta);
+                                if (Math.abs(a1 - absDelta) < 1) { debit = a1; credit = a2; }
+                                else if (Math.abs(a2 - absDelta) < 1) { debit = a2; credit = a1; }
+                                else { debit = a1; credit = a2; } // fallback
                             }
+                        } else {
+                            // No prev balance — standard column order: debit, credit, balance
+                            debit = a1;
+                            credit = a2;
                         }
                     }
-
-                    // DEBUG: Log extracted transaction details
-                    if (transactions.length < 5) {
-                        console.log(`[DEBUG]   Extracted -> Debit: ${debit}, Credit: ${credit}, Balance: ${balance}`);
+                } else if (amounts.length === 2) {
+                    // Two values: transaction amount + balance
+                    const amount = amounts[0];
+                    if (hasCR && !hasDR) {
+                        credit = amount;
+                    } else if (hasDR && !hasCR) {
+                        debit = amount;
+                    } else if (balanceDelta !== null) {
+                        if (balanceDelta > 0) credit = amount;
+                        else debit = amount;
+                    } else {
+                        credit = amount; // ultimate fallback
                     }
+                }
 
-                    // Extract description (everything between date and first amount)
-                    const dateEnd = line.indexOf(dateMatch[0]) + dateMatch[0].length;
-                    const firstAmountIdx = line.search(amountPattern);
-                    let description = '';
-                    
-                    if (firstAmountIdx > dateEnd) {
-                        description = line.substring(dateEnd, firstAmountIdx).trim();
-                    }
+                if (transactions.length < 5) {
+                    console.log(`[GENERIC]   -> Debit: ${debit}, Credit: ${credit}, Balance: ${balance}`);
+                }
 
-                    // Clean up description - remove common non-description text
-                    description = description
-                        .replace(/\s+/g, ' ')
-                        .replace(/^(\.|\-|\s)+/, '')
-                        .substring(0, 100);
+                // Extract description: text between end-of-date and first numeric amount
+                const dateEnd = combinedLine.indexOf(dateMatch[0]) + dateMatch[0].length;
+                const firstAmountIdx = combinedLine.search(amountPattern);
+                let description = '';
+                if (firstAmountIdx > dateEnd) {
+                    description = combinedLine.substring(dateEnd, firstAmountIdx).trim();
+                }
+                description = description.replace(/\s+/g, ' ').replace(/^([.\-\s])+/, '').substring(0, 100);
 
-                    // Only add if we have a valid description or the line has meaningful content
-                    if (description.length > 2 || amounts.length >= 2) {
-                        transactions.push({
-                            id: Math.random().toString(36).substr(2, 9),
-                            date: dateMatch[0],
-                            valueDate: dateMatch[0],
-                            description: description || 'Transaction',
-                            reference: '',
-                            debit: debit,
-                            credit: credit,
-                            balance: balance
-                        });
-                    }
+                if (description.length > 2 || amounts.length >= 2) {
+                    transactions.push({
+                        id: Math.random().toString(36).substr(2, 9),
+                        date: dateMatch[0],
+                        valueDate: dateMatch[0],
+                        description: description || 'Transaction',
+                        reference: '',
+                        debit: debit,
+                        credit: credit,
+                        balance: balance
+                    });
+                    // Skip lines already consumed by multi-line merge
+                    i = lookAhead - 1;
                 }
             }
-        }
 
-        console.log(`[uploadStatement] Extracted ${transactions.length} transactions from text`);
-        
-        // DEBUG: Log first few transactions to verify extraction
-        if (transactions.length > 0) {
-            console.log('[uploadStatement] First 3 extracted transactions:');
-            transactions.slice(0, 3).forEach((t, i) => {
-                console.log(`  [${i+1}] Date: ${t.date}, Debit: ${t.debit}, Credit: ${t.credit}, Balance: ${t.balance}`);
-                console.log(`      Desc: ${t.description?.substring(0, 50)}`);
-            });
-        }
+            console.log(`[uploadStatement] Generic parser extracted ${transactions.length} transactions`);
+            if (transactions.length > 0) {
+                console.log('[uploadStatement] First 3 transactions:');
+                transactions.slice(0, 3).forEach((t, idx) => {
+                    console.log(`  [${idx+1}] Date: ${t.date}, Dr: ${t.debit}, Cr: ${t.credit}, Bal: ${t.balance}, Desc: "${String(t.description).substring(0, 40)}"`);
+                });
+            }
         }
         
         // If no transactions found or very few, try universal parser
@@ -744,6 +768,51 @@ exports.uploadStatement = async (req, res) => {
                 transactions.length = 0;
                 transactions.push(...universalTransactions);
             }
+        }
+
+        // ── GLOBAL POST-PROCESSING: Balance continuity validation ──────────────────
+        // Run after ALL parsers complete. Detects and corrects swapped debit/credit
+        // values by checking each transaction against the running balance math.
+        if (transactions.length > 0 && openingBalance !== null) {
+            console.log('[POST_VALIDATE] Running balance continuity check...');
+            let runningBal = parseFloat(openingBalance);
+            let corrections = 0;
+
+            for (let i = 0; i < transactions.length; i++) {
+                const t = transactions[i];
+                const dr = parseFloat(t.debit) || 0;
+                const cr = parseFloat(t.credit) || 0;
+                const actualBal = parseFloat(t.balance) || 0;
+
+                const expectedNormal  = runningBal + cr - dr;
+                const expectedSwapped = runningBal + dr - cr;
+
+                if (Math.abs(actualBal - expectedNormal) < 1) {
+                    // Math checks out — no change needed
+                    runningBal = actualBal;
+                } else if (Math.abs(actualBal - expectedSwapped) < 1) {
+                    // Swap debit and credit
+                    transactions[i].debit  = cr;
+                    transactions[i].credit = dr;
+                    runningBal = actualBal;
+                    corrections++;
+                    console.log(`[POST_VALIDATE] Swapped dr/cr for txn ${i+1}: dr=${cr}, cr=${dr}, bal=${actualBal}`);
+                } else {
+                    // Can't reconcile — derive from balance delta
+                    const delta = actualBal - runningBal;
+                    if (delta >= 0) {
+                        transactions[i].credit = delta;
+                        transactions[i].debit  = 0;
+                    } else {
+                        transactions[i].debit  = Math.abs(delta);
+                        transactions[i].credit = 0;
+                    }
+                    runningBal = actualBal;
+                    corrections++;
+                    console.log(`[POST_VALIDATE] Derived txn ${i+1} from balance delta: ${delta.toFixed(2)}`);
+                }
+            }
+            console.log(`[POST_VALIDATE] Done. ${corrections} corrections applied.`);
         }
         
         // If NO transactions found, try AU Bank specific parsing
