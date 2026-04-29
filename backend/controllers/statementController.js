@@ -782,16 +782,30 @@ exports.uploadStatement = async (req, res) => {
                         }
                         
                         // Extract amounts from combined text - but filter out reference numbers
-                        // Reference numbers are typically long (6+ digits) while transaction amounts are reasonable (under 10 crore)
+                        // AU Bank format: amounts have commas (8,300.00) while ref numbers typically don't
                         const allAmountMatches = [...combinedText.matchAll(/[\d,]+\.\d{2}/g)];
                         const validAmounts = [];
                         
                         for (const match of allAmountMatches) {
-                            const num = parseFloat(match[0].replace(/,/g, ''));
-                            // Filter: amounts should be between 0 and 100 crore (reasonable transaction range)
-                            // and not be part of reference numbers (which are usually standalone long numbers)
-                            if (num > 0 && num < 1000000000) {
+                            const matchStr = match[0];
+                            const num = parseFloat(matchStr.replace(/,/g, ''));
+                            
+                            // STRICT AU BANK FILTERS:
+                            // 1. Must have comma separator (transaction amounts like 8,300.00)
+                            // 2. Must be reasonable transaction range (0.01 to 10 crore)
+                            // 3. Skip if it looks like a reference number (no comma and 5+ digits before decimal)
+                            const hasComma = matchStr.includes(',');
+                            const digitsBeforeDecimal = matchStr.split('.')[0].replace(/,/g, '').length;
+                            
+                            // Valid amounts: have comma OR are small numbers (under 1 lakh without comma)
+                            // Invalid: large numbers without comma (reference numbers like 64515.00)
+                            const isValidAmount = (hasComma || digitsBeforeDecimal <= 5) && 
+                                                  num > 0 && num < 10000000; // Max 10 lakh for typical transactions
+                            
+                            if (isValidAmount) {
                                 validAmounts.push(num);
+                            } else if (transactions.length < 3) {
+                                console.log(`[AU_FILTER] Rejected: ${matchStr} (hasComma:${hasComma}, digits:${digitsBeforeDecimal})`);
                             }
                         }
                         
