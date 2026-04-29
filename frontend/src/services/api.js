@@ -1,9 +1,11 @@
 import axios from 'axios';
 
 const api = axios.create({
-    // In development, Vite proxies /api → http://localhost:5001/api (no CORS issues).
-    // In production, this resolves to the same origin as the deployed frontend.
-    baseURL: '/api',
+    // In development, Vite proxies /api → http://localhost:5002/api (no CORS issues).
+    // In production, use the live Render backend URL.
+    baseURL: import.meta.env.PROD
+        ? 'https://pdf-editor-ax8j.onrender.com/api'
+        : '/api',
     headers: {
         'Content-Type': 'application/json',
     },
