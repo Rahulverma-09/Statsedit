@@ -9,6 +9,7 @@ export function TransactionTable(props) {
     const {
         transactions: initialTransactions = [],
         openingBalance: initOpening = 0,
+        closingBalance: initClosing = null,
         fileUrl,
         onUpdateFileUrl,
         onTransform,
@@ -23,7 +24,7 @@ export function TransactionTable(props) {
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 10;
+    const itemsPerPage = 100; // Show more transactions per page
 
     // Track the last known transaction count so we only reset the page when a
     // genuinely new file is loaded (different row count), not when a value is
@@ -31,6 +32,7 @@ export function TransactionTable(props) {
     const prevLengthRef = React.useRef(initialTransactions.length);
 
     useEffect(() => {
+        console.log('[TransactionTable] Received transactions:', initialTransactions?.length || 0);
         setTransactions(initialTransactions);
         setOpeningBalance(parseFloat(initOpening || 0).toFixed(2));
         if (initialTransactions.length !== prevLengthRef.current) {
@@ -54,12 +56,13 @@ export function TransactionTable(props) {
         return transactions.slice(startIndex, startIndex + itemsPerPage);
     }, [transactions, currentPage]);
 
-    // Dynamically computed closing balance = last transaction's balance
+    // Use backend closing balance if provided, otherwise compute from last transaction
     const closingBalance = useMemo(() => {
+        if (initClosing !== null && initClosing !== undefined) return parseFloat(initClosing) || 0;
         if (transactions.length === 0) return parseFloat(initOpening) || 0;
         const lastBalance = transactions[transactions.length - 1]?.balance;
         return parseFloat(String(lastBalance).replace(/,/g, '')) || 0;
-    }, [transactions, initOpening]);
+    }, [transactions, initOpening, initClosing]);
 
     // Calculate totals for debit and credit columns - auto-updates when transactions change
     const totals = useMemo(() => {

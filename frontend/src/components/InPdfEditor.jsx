@@ -33,6 +33,7 @@ export function InPdfEditor(props) {
         // When a new file is uploaded, the parent provides new initialTransactions.
         // We ALWAYS accept them as the baseline. The visual parser will overwrite 
         // them later if it succeeds in extracting better structured data.
+        console.log('[InPdfEditor] initialTransactions prop received:', initialTransactions?.length || 0);
         if (initialTransactions) {
             setInternalTransactions(initialTransactions);
         }
@@ -359,7 +360,8 @@ export function InPdfEditor(props) {
                             const origCre = creditItem ? cleanNum(creditItem.text) : 0;
                             const opening = origBal - origCre + origDeb;
                             lastKnownBalance = opening + credit - debit;
-                            setTimeout(() => setDeducedOpeningBalance(opening), 0);
+                            // Don't override backend opening balance with visual parser calculation
+                            // setTimeout(() => setDeducedOpeningBalance(opening), 0);
                         } else {
                             // Auto-correct swapped Debit/Credit if the math makes more sense
                             const expectedNormal = lastKnownBalance + credit - debit;
@@ -431,6 +433,7 @@ export function InPdfEditor(props) {
 
             // Only use visual parser transactions if backend didn't provide any
             // Backend extraction is more accurate for protected PDFs
+            console.log('[VISUAL_PARSER] Comparison - Backend:', initialTransactions?.length || 0, 'rows, Visual parser:', newInternalTxns.length, 'rows');
             if (newInternalTxns.length > 0 && (!initialTransactions || initialTransactions.length === 0)) {
                 console.log('[VISUAL_PARSER] Using visual parser data (no backend data)');
                 setInternalTransactions(newInternalTxns);
@@ -454,7 +457,7 @@ export function InPdfEditor(props) {
             // Reset state for new file
             setTableStructure(null);
             setPagesData([]);
-            setDeducedOpeningBalance(0);
+            setDeducedOpeningBalance(null); // Use backend opening balance, not visual parser
             setInternalTransactions(initialTransactions || []); // Initialize with backend fallback data for the NEW file, preventing old file bleed
 
             try {

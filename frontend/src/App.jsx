@@ -88,6 +88,14 @@ function App() {
   }, []);
 
   const handleUpload = (file, fileUrl, transactions, openingBalance, closingBalance, password) => {
+    // DEBUG: Log transaction count at each stage
+    console.log('[App.handleUpload] Received from backend:', {
+      transactionCount: transactions?.length || 0,
+      openingBalance,
+      closingBalance,
+      sampleTxn: transactions?.[0]
+    });
+    
     // If backend returns a URL, use it, otherwise fallback to local blob for preview
     const finalUrl = fileUrl || URL.createObjectURL(file);
     setUploadedFileUrl(finalUrl);
