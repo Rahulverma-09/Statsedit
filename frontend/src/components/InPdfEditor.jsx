@@ -39,10 +39,10 @@ export function InPdfEditor(props) {
     }, [initialTransactions]);
 
     const analyzeTableStructure = (allPagesData) => {
-        const dateSigs    = ['date', 'value dt', 'vldt', 'tran date', 'value date', 'txn date', 'trans date', 'posting'];
-        const debitSigs   = ['debit', 'withdrawal', 'payment', 'paid out', 'dr(', 'dr (', 'dr (₹)', 'withdraw', '(dr', 'dr.'];
-        const creditSigs  = ['credit', 'deposit', 'receipt', 'paid in', 'cr(', 'cr (', 'cr (₹)', '(cr', 'cr.'];
-        const balanceSigs = ['balance', 'bal (', 'bal(₹)', 'bal.'];
+        const dateSigs    = ['date', 'value dt', 'vldt', 'tran date', 'value date', 'txn date', 'trans date', 'posting', 'dt'];
+        const debitSigs   = ['debit', 'withdrawal', 'payment', 'paid out', 'dr(', 'dr (', 'dr (₹)', 'withdraw', '(dr', 'dr.', 'dr', 'withdrawals'];
+        const creditSigs  = ['credit', 'deposit', 'receipt', 'paid in', 'cr(', 'cr (', 'cr (₹)', '(cr', 'cr.', 'cr', 'deposits'];
+        const balanceSigs = ['balance', 'bal (', 'bal(₹)', 'bal.', 'bal', 'closing', 'running'];
 
         const findItem = (items, sigs, exclude = []) => {
             // Only consider text items that are not massive paragraphs. 
@@ -64,11 +64,12 @@ export function InPdfEditor(props) {
             return found || null;
         };
 
+        // ENHANCED: Try multiple pages and multiple strategies
         for (const page of allPagesData) {
-            // 1. Find all valid Date header candidates on the page
+            // Strategy 1: Find Date header and build from there
             const dateCandidates = page.items.filter(it => {
                 const t = (it.text || '').toLowerCase();
-                const excludes = ['statement', 'opening', 'closing', 'open', 'from', 'to'];
+                const excludes = ['statement', 'opening', 'closing', 'open', 'from', 'to', 'period'];
                 if (excludes.some(e => t.includes(e))) return false;
                 
                 if (dateSigs.some(s => t.includes(s))) return true;
@@ -76,53 +77,104 @@ export function InPdfEditor(props) {
                 return false;
             });
 
-            // 2. For each candidate, find the other headers strictly within its horizontal row (+/- 120pt)
-            // 120pt safely encompasses exceptionally tall, multi-line table headers found in scaled SBI statements.
             for (const mDate of dateCandidates) {
-                const headerRowCandidates = page.items.filter(it => Math.abs(it.y - mDate.y) < 120);
+                // Increased tolerance to 150pt for extremely tall headers
+                const headerRowCandidates = page.items.filter(it => Math.abs(it.y - mDate.y) < 150);
 
                 const mDebit   = findItem(headerRowCandidates, debitSigs);
                 const mCredit  = findItem(headerRowCandidates, creditSigs);
                 const mBalance = findItem(headerRowCandidates, balanceSigs, ['opening', 'closing', 'clear', 'avg', 'average', 'mod', 'lien', 'forward', 'summary']);
 
-                // If Date is found, we lock onto this row as the header row, even if amount headers are oddly named/missing.
-                // We will rely on safe default X-coordinates if they are not found.
+                const getX = (it) => it ? it.x + (it.width || 0) / 2 : null;
 
-            const getX = (it) => it ? it.x + (it.width || 0) / 2 : null;
+                const structure = {
+                    pageIndex: page.pageIndex,
+                    headerY: mDate.y,
+                    debitX:   getX(mDebit),
+                    creditX:  getX(mCredit),
+                    balanceX: getX(mBalance)
+                };
 
-            const structure = {
-                pageIndex: page.pageIndex,
-                headerY: mDate.y, // Anchor transactions relative to the Date header
-                debitX:   getX(mDebit),
-                creditX:  getX(mCredit),
-                balanceX: getX(mBalance)
-            };
+                // Improved fallbacks with better spacing
+                if (structure.debitX === null && structure.creditX === null) {
+                    const pageWidth = page.width || 600;
+                    structure.balanceX = structure.balanceX || (pageWidth - 50);
+                    structure.creditX = structure.balanceX - 100;
+                    structure.debitX = structure.creditX - 100;
+                }
+                if (structure.debitX  === null && structure.creditX  !== null) structure.debitX  = structure.creditX  - 100;
+                if (structure.creditX === null && structure.debitX   !== null) structure.creditX  = structure.debitX   + 100;
+                if (structure.balanceX=== null && structure.creditX  !== null) structure.balanceX = structure.creditX  + 100;
 
-            // Fallbacks when a column header item wasn't found
-            if (structure.debitX === null && structure.creditX === null) {
-                structure.creditX = (structure.balanceX || (page.width - 50)) - 100;
-                structure.debitX = structure.creditX - 100;
+                structure.boundaries = {
+                    debitLeft:     (structure.debitX || 400) - 120,
+                    debitCredit:   (structure.debitX  + structure.creditX)  / 2,
+                    creditBalance: (structure.creditX + structure.balanceX) / 2
+                };
+
+                console.log('[analyzeTableStructure] Detected structure:', structure);
+                setTableStructure(structure);
+                return structure;
             }
-            if (structure.debitX  === null && structure.creditX  !== null) structure.debitX  = structure.creditX  - 100;
-            if (structure.creditX === null && structure.debitX   !== null) structure.creditX  = structure.debitX   + 100;
-            if (structure.balanceX=== null && structure.creditX  !== null) structure.balanceX = structure.creditX  + 100;
+            
+            // Strategy 2: Look for numeric columns (amounts) and infer structure
+            const numericItems = page.items.filter(it => {
+                const t = (it.text || '').trim();
+                return /^[\d,]+\.\d{2}$/.test(t) && parseFloat(t.replace(/,/g, '')) > 0;
+            });
+            
+            if (numericItems.length >= 10) {
+                // Group by X position to find columns
+                const xGroups = {};
+                numericItems.forEach(it => {
+                    const x = Math.round(it.x / 20) * 20; // Group by 20pt buckets
+                    if (!xGroups[x]) xGroups[x] = [];
+                    xGroups[x].push(it);
+                });
+                
+                const columns = Object.entries(xGroups)
+                    .filter(([_, items]) => items.length >= 3) // At least 3 items in column
+                    .sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]));
+                
+                if (columns.length >= 2) {
+                    console.log('[analyzeTableStructure] Detected columns from numeric analysis:', columns.length);
+                    
+                    const pageWidth = page.width || 600;
+                    let debitX, creditX, balanceX;
+                    
+                    if (columns.length === 2) {
+                        // Amount + Balance
+                        creditX = parseFloat(columns[0][0]);
+                        balanceX = parseFloat(columns[1][0]);
+                        debitX = creditX - 100;
+                    } else if (columns.length >= 3) {
+                        // Debit, Credit, Balance
+                        debitX = parseFloat(columns[columns.length - 3][0]);
+                        creditX = parseFloat(columns[columns.length - 2][0]);
+                        balanceX = parseFloat(columns[columns.length - 1][0]);
+                    }
+                    
+                    const structure = {
+                        pageIndex: page.pageIndex,
+                        headerY: 0,
+                        debitX, creditX, balanceX,
+                        boundaries: {
+                            debitLeft: debitX - 120,
+                            debitCredit: (debitX + creditX) / 2,
+                            creditBalance: (creditX + balanceX) / 2
+                        }
+                    };
+                    
+                    console.log('[analyzeTableStructure] Structure from numeric analysis:', structure);
+                    setTableStructure(structure);
+                    return structure;
+                }
+            }
+        }
 
-            structure.boundaries = {
-                debitLeft:     (structure.debitX || 400) - 120, // Accommodates very large right-aligned numbers
-                debitCredit:   (structure.debitX  + structure.creditX)  / 2,
-                creditBalance: (structure.creditX + structure.balanceX) / 2
-            };
-
-            console.log('[analyzeTableStructure] Detected structure:', structure);
-            setTableStructure(structure);
-            return structure;
-            } // Close for(const mDate of dateCandidates)
-        } // Close for(const page of allPagesData)
-
-        console.warn('[analyzeTableStructure] Could not detect table headers natively. Forcing default standard structure to guarantee visual parser execution.');
+        console.warn('[analyzeTableStructure] Could not detect table headers natively. Using enhanced fallback structure.');
         
-        // Return a standard A4 fallback structure so the visual parser ALWAYS runs.
-        // This ensures extraction succeeds even if headers are drawn as images or have bizarre names.
+        // Enhanced fallback with better defaults
         return {
             pageIndex: 1,
             headerY: 0,
@@ -139,6 +191,12 @@ export function InPdfEditor(props) {
 
     const runAutoCalculation = (dataToProcess = null, activeStructure = tableStructure) => {
         if (!activeStructure) return;
+        
+        // CRITICAL FIX: If backend already provided good data (5+ transactions), don't override with visual parser
+        if (initialTransactions && initialTransactions.length >= 5) {
+            console.log('[runAutoCalculation] Backend provided sufficient data, skipping visual parser override');
+            return;
+        }
 
         setPagesData(prevPages => {
             const sourcePages = dataToProcess || prevPages;
@@ -197,9 +255,9 @@ export function InPdfEditor(props) {
                     // 1. Skip if it contains summary keywords
                     if (rowText.includes('balance') && (rowText.includes('opening') || rowText.includes('closing'))) return;
 
-                    // 2. REQUIRE a Date format to start/be in the row (e.g. DD MMM or DD/MM)
-                    // Supports DD/MM/YY, DD-MM-YYYY, DD MMM YYYY, and tolerates pdf.js kerning splits
-                    const dateRegex = /\b\d{1,2}\s*(?:[\/\-\.]|\s+)\s*(?:[A-Za-z]{3,}|\d{1,2})\s*(?:(?:[\/\-\.]|\s+)\s*\d{2,4})?\b/;
+                    // 2. REQUIRE a Date format to start/be in the row
+                    // Enhanced date regex supporting multiple formats
+                    const dateRegex = /\b\d{1,2}\s*(?:[\/\-\.]|\s+)\s*(?:[A-Za-z]{3,}|\d{1,2})\s*(?:(?:[\/\-\.]|\s+)\s*\d{2,4})?\b|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{2,4}/i;
                     if (!dateRegex.test(rowText)) return;
 
                     // Horizontally merge items that are very close to each other to fix pdf.js number splitting (e.g., "11,068." and "21")
