@@ -1338,7 +1338,20 @@ export function InPdfEditor(props) {
                         <FileDown className="w-3.5 h-3.5" /> Download
                     </button>
 
-
+                    {pagesData.some(p => p.items.some(i => i.hasChanged)) && (
+                        <button
+                            onClick={handleSave}
+                            disabled={isSaving}
+                            className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.97] text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm transition-all animate-in fade-in zoom-in duration-300"
+                        >
+                            {isSaving ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                                <Save className="w-3.5 h-3.5" />
+                            )}
+                            Save Changes
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -1379,7 +1392,8 @@ export function InPdfEditor(props) {
                                         pdf={pdf}
                                         pageData={pageData}
                                         scale={scale}
-                                        readOnly={true}
+                                        onTextChange={handleTextChange}
+                                        readOnly={false}
                                     />
                                 </div>
                             );
