@@ -337,115 +337,109 @@ exports.uploadStatement = async (req, res) => {
         const transactions = [];
         const lines = text.split('\n').filter(line => line.trim());
 
-        // ==================== AU SMALL FINANCE BANK SPECIALIZED PARSER ====================
+        // ==================== AU SMALL FINANCE BANK SPECIALIZED PARSER v3.0 (IRONCLAD) ====================
         if (isAU) {
-            console.log('[AU_BANK_PARSER] 🚀 Running Specialized AU Bank Parser v2.0...');
-            const auDatePattern = /(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/;
-            const transactions_au = [];
-            let currentTxn = null;
+            console.log('[AU_BANK_PARSER_v3] 🚀 Starting Ironclad Parsing...');
+            const dateRegex = /^(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})/;
+            const amountRegex = /(-?[\d,]+\.\d{2})/g;
+            
+            const rawLines = text.split('\n').map(l => l.trim()).filter(l => l);
+            const txnBlocks = [];
+            let activeBlock = null;
 
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-                const dateMatch = line.match(auDatePattern);
-
-                // Skip common non-transaction lines in AU Bank statements
-                if (line.toLowerCase().includes('brought forward') || 
-                    line.toLowerCase().includes('carried forward') ||
-                    line.toLowerCase().includes('page total') ||
+            for (let line of rawLines) {
+                // Ignore obvious headers/footers/metadata
+                if (line.toLowerCase().includes('statement date') || 
+                    line.toLowerCase().includes('page') || 
+                    line.toLowerCase().includes('customer id') ||
+                    line.toLowerCase().includes('account no') ||
+                    line.toLowerCase().includes('closing balance') ||
                     line.toLowerCase().includes('opening balance') ||
-                    line.toLowerCase().includes('closing balance')) {
+                    line.toLowerCase().includes('brought forward')) {
+                    if (activeBlock) { txnBlocks.push(activeBlock); activeBlock = null; }
                     continue;
                 }
 
+                const dateMatch = line.match(dateRegex);
                 if (dateMatch) {
-                    // If we have a current transaction and we find a NEW date,
-                    // check if the current one is actually a "Date + Value Date" pair.
-                    // AU Bank: Line 1 = Txn Date, Line 2 = Value Date.
-                    if (currentTxn && !currentTxn.hasValueDate && currentTxn.text.length < 150) {
-                        const allAmountsInLine = [...line.matchAll(/[\d,]+\.\d{2}/g)];
-                        // If the line with the second date has no amounts, it's likely the Value Date
-                        if (allAmountsInLine.length === 0) {
-                            currentTxn.text += " " + line;
-                            currentTxn.hasValueDate = true;
-                            currentTxn.valueDate = dateMatch[0];
-                            continue;
-                        }
-                    }
-
-                    // Save the previous transaction before starting a new one
-                    if (currentTxn) transactions_au.push(currentTxn);
-                    currentTxn = { 
-                        date: dateMatch[0], 
-                        text: line,
-                        hasValueDate: false,
-                        valueDate: dateMatch[0]
+                    // New transaction starts
+                    if (activeBlock) txnBlocks.push(activeBlock);
+                    activeBlock = {
+                        date: dateMatch[1],
+                        fullText: line,
+                        amounts: []
                     };
-                } else if (currentTxn) {
-                    currentTxn.text += " " + line;
+                } else if (activeBlock) {
+                    activeBlock.fullText += " " + line;
                 }
             }
-            if (currentTxn) transactions_au.push(currentTxn);
+            if (activeBlock) txnBlocks.push(activeBlock);
+
+            console.log(`[AU_BANK_PARSER_v3] Found ${txnBlocks.length} potential blocks`);
 
             let runningBal = openingBalance;
-            for (const pt of transactions_au) {
-                // Extract all amounts from the entire multi-line block
-                const amounts = [...pt.text.matchAll(/[\d,]+\.\d{2}/g)].map(m => parseFloat(m[0].replace(/,/g, '')));
-                
-                // A valid AU transaction block MUST have at least 2 amounts (Txn Amount + Balance)
-                // or 3 amounts (Debit + Credit + Balance)
-                if (amounts.length < 2) continue;
+            for (const block of txnBlocks) {
+                // Extract amounts from the entire block
+                // We must be careful: ignore long numeric strings that aren't actually amounts
+                const allNumbers = [...block.fullText.matchAll(amountRegex)].map(m => m[1]);
+                const validAmounts = allNumbers.filter(numStr => {
+                    const clean = numStr.replace(/,/g, '');
+                    // Valid amounts usually aren't 12+ digits long (that's an account/ref number)
+                    return clean.replace('.', '').length < 11;
+                }).map(numStr => parseFloat(numStr.replace(/,/g, '')));
 
-                const balance = amounts[amounts.length - 1];
+                if (validAmounts.length < 2) continue;
+
+                // In AU Bank, the Balance is always the LAST valid amount in the block
+                const balance = validAmounts[validAmounts.length - 1];
                 let debit = 0, credit = 0;
 
-                if (amounts.length >= 3) {
-                    // Try to identify debit/credit columns based on balance change
-                    const a1 = amounts[amounts.length - 3]; // Potential Debit
-                    const a2 = amounts[amounts.length - 2]; // Potential Credit
-                    
-                    if (runningBal !== null) {
-                        const delta = balance - runningBal;
-                        // Precision check (allowing for 0.01 cent rounding)
-                        if (Math.abs(delta - a2) < 0.05) { credit = a2; debit = a1; }
-                        else if (Math.abs(delta + a1) < 0.05) { debit = a1; credit = a2; }
-                        else if (Math.abs(delta - (a2 - a1)) < 0.05) { credit = a2; debit = a1; } // Rare case both columns have values
-                        else { 
-                            // Default to balance delta if columns are ambiguous
-                            if (delta > 0) { credit = delta; debit = 0; }
-                            else { debit = Math.abs(delta); credit = 0; }
+                if (runningBal !== null) {
+                    const delta = parseFloat((balance - runningBal).toFixed(2));
+                    // Check if any of the other amounts in the block matches this delta
+                    let foundMatch = false;
+                    for (let j = 0; j < validAmounts.length - 1; j++) {
+                        const amt = validAmounts[j];
+                        if (Math.abs(amt - Math.abs(delta)) < 0.05) {
+                            if (delta > 0) { credit = amt; debit = 0; }
+                            else { debit = amt; credit = 0; }
+                            foundMatch = true;
+                            break;
                         }
-                    } else {
-                        debit = a1; credit = a2;
+                    }
+
+                    if (!foundMatch) {
+                        // If no specific amount matches the delta (rarely happens if split across lines)
+                        // fallback to the delta itself
+                        if (delta > 0) { credit = delta; debit = 0; }
+                        else { debit = Math.abs(delta); credit = 0; }
                     }
                 } else {
-                    // Only 2 amounts: [Amount, Balance]
-                    const amt = amounts[0];
-                    if (runningBal !== null) {
-                        const delta = balance - runningBal;
-                        if (delta > 0) { credit = amt; debit = 0; }
-                        else { debit = amt; credit = 0; }
+                    // First transaction fallback
+                    const amt = validAmounts[0];
+                    if (block.fullText.toLowerCase().includes('cr') || /NEFT CR|UPI CR/i.test(block.fullText)) {
+                        credit = amt;
                     } else {
-                        // Fallback to text indicators
-                        if (pt.text.toLowerCase().includes('cr') || /NEFT CR|UPI CR|IMPS CR/i.test(pt.text)) credit = amt;
-                        else debit = amt;
+                        debit = amt;
                     }
                 }
 
-                // Clean description
-                let description = pt.text
-                    .replace(pt.date, '')
-                    .replace(pt.valueDate || '', '')
-                    .replace(/[\d,]+\.\d{2}/g, ' ')
+                // Extract Description: everything between the dates and the first amount
+                // AU Bank often has two dates at the start (Txn Date and Value Date)
+                let desc = block.fullText
+                    .replace(/^\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/, '') // Remove Txn Date
+                    .replace(/^\s*\d{1,2}\s+[A-Za-z]{3}\s+\d{4}/, '') // Remove Value Date if present
+                    .split(/[\d,]+\.\d{2}/)[0] // Take everything before the first amount
                     .replace(/\s+/g, ' ')
                     .trim();
 
-                if (description.length < 3) description = "Transaction";
+                if (desc.length < 2) desc = "Transaction";
 
                 transactions.push({
-                    id: 'au_' + Math.random().toString(36).substr(2, 9),
-                    date: pt.date,
-                    valueDate: pt.valueDate || pt.date,
-                    description: description.substring(0, 150),
+                    id: 'au_v3_' + Math.random().toString(36).substr(2, 9),
+                    date: block.date,
+                    valueDate: block.date, // Simplification for UI
+                    description: desc.substring(0, 150),
                     reference: '',
                     debit: parseFloat(debit.toFixed(2)),
                     credit: parseFloat(credit.toFixed(2)),
@@ -453,7 +447,7 @@ exports.uploadStatement = async (req, res) => {
                 });
                 runningBal = balance;
             }
-            console.log(`[AU_BANK_PARSER] ✅ Success: Extracted ${transactions.length} transactions`);
+            console.log(`[AU_BANK_PARSER_v3] ✅ Final Extraction: ${transactions.length} rows`);
         } 
         else {
             console.log('[UNIVERSAL_PARSER] Running universal parser...');
