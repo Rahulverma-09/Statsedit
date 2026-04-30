@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = '';
+const API_BASE = 'https://pdf-editor-ax8j.onrender.com';
 
 const api = axios.create({
     baseURL: `${API_BASE}/api`,
