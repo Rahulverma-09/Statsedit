@@ -920,6 +920,7 @@ export function InPdfEditor(props) {
 
                 const rowText = row.map(it => (it.text || '').toLowerCase()).join(' ');
                 if (rowText.includes('balance') && (rowText.includes('opening') || rowText.includes('closing'))) return false;
+                if (rowText.includes('statement date') || rowText.includes('generated on')) return false;
                 // Skip repeated table-header rows on subsequent pages
                 if (rowText.includes('transaction') && rowText.includes('debit') && rowText.includes('credit')) return false;
 
@@ -1061,6 +1062,7 @@ export function InPdfEditor(props) {
                     if (isTotal) {
                         const newDebitSum = editedTxns.reduce((sum, t) => sum + cleanOrigNum(t.debit), 0);
                         const newCreditSum = editedTxns.reduce((sum, t) => sum + cleanOrigNum(t.credit), 0);
+                        console.log(`[TOTAL_DEBUG] Row matches 'Total'. Sums: DR=${newDebitSum}, CR=${newCreditSum}`);
 
                         const numItems = row.filter(it => /^[0-9,.\-\s()₹]+$/.test(it.text.trim()) && cleanOrigNum(it.originalText) > 0);
                         numItems.forEach(best => {
@@ -1076,8 +1078,7 @@ export function InPdfEditor(props) {
 
                             if (targetVal !== null) {
                                 const formatted = formatLikeOriginal(normalizeNum(targetVal), best.originalText);
-                                if (best.originalText === formatted) return;
-
+                                // Always push for Total row to be safe
                                 summaryUpdates.push({
                                     pageIndex: page.pageIndex,
                                     x: best.x,

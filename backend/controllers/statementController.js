@@ -657,9 +657,13 @@ exports.editDirect = async (req, res) => {
                 drawX = change.x + change.width - textWidth;
             }
 
+            const mColor = change.maskColor && Array.isArray(change.maskColor) 
+                ? rgb(change.maskColor[0], change.maskColor[1], change.maskColor[2])
+                : rgb(1, 1, 1);
+
             page.drawRectangle({
                 x: drawX - 2, y: change.y - 4, width: textWidth + 4, height: fontSize + 8,
-                color: rgb(1, 1, 1)
+                color: mColor
             });
 
             page.drawText(String(change.newText), {
