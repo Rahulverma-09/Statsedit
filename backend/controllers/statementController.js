@@ -661,8 +661,12 @@ exports.editDirect = async (req, res) => {
                 ? rgb(change.maskColor[0], change.maskColor[1], change.maskColor[2])
                 : rgb(1, 1, 1);
 
+            // MASKING: Use the larger of original width or new text width to ensure full erasure
+            const maskWidth = Math.max(change.width || 0, textWidth) + 4;
+            const maskX = change.isNumeric && change.width ? (change.x + change.width - maskWidth + 2) : (drawX - 2);
+
             page.drawRectangle({
-                x: drawX - 2, y: change.y - 4, width: textWidth + 4, height: fontSize + 8,
+                x: maskX, y: change.y - 4, width: maskWidth, height: fontSize + 8,
                 color: mColor
             });
 

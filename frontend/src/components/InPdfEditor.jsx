@@ -964,7 +964,16 @@ export function InPdfEditor(props) {
 
             txnRows.forEach((row, idx) => {
                 // BOUNDED COLUMN ASSIGNMENT: Virtual "Walls" between columns
-                const rowItems = row.filter(it => /^[0-9,.\-\s()₹]+$/.test(it.text.trim()) || it.text.trim() === '-');
+                const rowItems = row.filter(it => {
+                    const txt = it.text.trim();
+                    // Must be numeric pattern
+                    if (!/^[0-9,.\-\s()₹]+$/.test(txt) && txt !== '-') return false;
+                    // Anti-Reference Check: Amounts in AU Bank are almost never > 10 digits
+                    // If it's longer, it's likely a Cheque/Reference No. or Account Number
+                    const clean = txt.replace(/[^0-9]/g, '');
+                    if (clean.length > 10) return false;
+                    return true;
+                });
                 const columnAssignments = { debit: null, credit: null, balance: null };
 
                 rowItems.forEach(it => {
